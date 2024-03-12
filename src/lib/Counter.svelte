@@ -2,39 +2,49 @@
     import { onMount } from "svelte";
     import * as hailo from "./wasm/hailo.js";
 
-    // let a = new BigUint64Array(1);
-    // let b = new BigUint64Array(1);
-    // let c = 0n;
-
-    let a = 0;
-    let b = 0;
-    let c = 0;
+    let nullifier = BigInt(0x456);
+    let secret = BigInt(0xabc);
+    let path_elements = BigUint64Array.from([2n, 5n, 7n, 14n, 23n]);
+    let path_indices = BigUint64Array.from([0n, 0n, 1n, 1n, 0n]);
 
     let setup;
     let proof;
+
+    let root =
+        BigInt(
+            0x00000000000000000000000000000000000000000000000000000010020445e0,
+        );
 
     let result;
 
     onMount(async () => {
         // hailo = await _hailo();
         await hailo.default();
-        setup = hailo.setup_params(4);
+        setup = hailo.setup_params(10);
     });
 
     function prove() {
-        proof = hailo.proof_generate(a, b, 7, setup);
+        proof = hailo.proof_generate(
+            nullifier,
+            secret,
+            path_elements,
+            path_indices,
+            setup,
+        );
     }
 
     function verify() {
-        result = hailo.proof_verify(setup, 7, c, proof);
+        result = hailo.proof_verify(setup, nullifier, root, proof);
     }
 </script>
 
-a:<input bind:value={a} />
-b:<input bind:value={b} />
-c:<input bind:value={c} />
+nullifier:<input bind:value={nullifier} />
+secret:<input bind:value={secret} />
+root:<input bind:value={root} />
 
-{result}
+<br />
+{result == undefined ? "" : result ? "Verified" : "Verify Failed"}
+<br />
 
 <button on:click={prove}> proof generate </button>
 

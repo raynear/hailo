@@ -1,6 +1,7 @@
-use crate::hailo::{
-    create_circuit, empty_circuit, generate_keys, generate_proof, generate_setup_params, verify,
-    MyCircuit,
+use crate::circuits::tornado::TornadoCircuit;
+use crate::{
+    compute_root, create_circuit, empty_circuit, generate_keys, generate_proof,
+    generate_setup_params, hash_value, hash_values, verify,
 };
 use halo2_proofs::{
     pasta::{EqAffine, Fp},
@@ -36,25 +37,42 @@ pub fn setup_params(k: u32) -> Uint8Array {
 }
 
 #[wasm_bindgen]
-pub fn proof_generate(a: u8, b: u8, constant: u8, params_bytes: &[u8]) -> Uint8Array {
+pub fn proof_generate(
+    nullifier: u64,
+    secret: u64,
+    path_elements: Vec<u64>,
+    path_indices: Vec<u64>,
+    params_bytes: &[u8],
+) -> Uint8Array {
     log("proving...");
 
     let params = Params::<EqAffine>::read(&mut BufReader::new(params_bytes))
         .expect("params should not fail to read");
 
-    let constant = Fp::from(constant as u64);
-    let a = Fp::from(a as u64);
-    let b = Fp::from(b as u64);
+    let nullifier = Fp::from(nullifier as u64);
+    let secret = Fp::from(secret as u64);
 
-    let c = a + b;
-    let public_inputs: Vec<Fp> = vec![c];
+    let path_elements: Vec<Fp> = path_elements.iter().map(|e| Fp::from(*e)).collect();
+    let path_indices: Vec<Fp> = path_indices.iter().map(|e| Fp::from(*e)).collect();
+
+    let commitment = hash_values(vec![nullifier, secret]);
+    log(format!("commitment {:?}", commitment).as_str());
+
+    let root = compute_root(commitment, path_elements.clone(), path_indices.clone());
+    log(format!("root {:?}", root).as_str());
+
+    let nullifier_hash = hash_value(nullifier);
+    log(format!("nullifier_hash {:?}", nullifier_hash).as_str());
+
+    let public_inputs: Vec<Fp> = vec![nullifier_hash, root];
 
     // Generate proving key
-    let empty_circuit: MyCircuit<Fp> = empty_circuit(constant);
+    let empty_circuit: TornadoCircuit<Fp> = empty_circuit();
     let (pk, _vk) = generate_keys(&params, &empty_circuit);
 
     // Generate proof
-    let circuit: MyCircuit<Fp> = create_circuit(a, b, constant);
+    let circuit: TornadoCircuit<Fp> =
+        create_circuit(nullifier, secret, path_elements, path_indices);
     let proof = generate_proof(&params, &pk, circuit, &public_inputs);
 
     log("proved");
@@ -62,22 +80,23 @@ pub fn proof_generate(a: u8, b: u8, constant: u8, params_bytes: &[u8]) -> Uint8A
 }
 
 #[wasm_bindgen]
-pub fn proof_verify(params_bytes: &[u8], constant: u8, c: u8, proof: &[u8]) -> bool {
+pub fn proof_verify(params_bytes: &[u8], nullifier: u64, root: u64, proof: &[u8]) -> bool {
     log("verifying...");
 
     let params = Params::<EqAffine>::read(&mut BufReader::new(params_bytes))
         .expect("params should not fail to read");
 
-    let constant = Fp::from(constant as u64);
-
     // Generate verifying key
-    let empty_circuit = empty_circuit(constant);
+    let empty_circuit = empty_circuit();
     let vk = keygen_vk(&params, &empty_circuit).expect("vk should not fail to generate");
 
-    let c = Fp::from(c as u64);
+    let nullifier = Fp::from(nullifier);
+    let nullifier_hash = hash_value(nullifier);
+    log(format!("nullifier_hash {:?}", nullifier_hash).as_str());
 
     // Transform params for verify function
-    let public_input: Vec<Fp> = vec![c];
+    let root = Fp::from(root);
+    let public_input: Vec<Fp> = vec![nullifier_hash, root];
     let proof_vec = proof.to_vec();
 
     // Verify the proof and public input

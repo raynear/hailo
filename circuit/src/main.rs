@@ -1,38 +1,65 @@
-#[cfg(not(target_family = "wasm"))]
+use hailo::circuits::tornado::TornadoCircuit;
+use hailo::{compute_root, hash_value, hash_values};
+use hailo::{
+    create_circuit, empty_circuit, generate_keys, generate_proof, generate_setup_params, verify,
+};
+use halo2_proofs::pasta::Fp;
+use halo2_proofs::{circuit::Value, dev::MockProver};
 
 fn main() {
-    use hailo::hailo::{
-        create_circuit, generate_keys, generate_proof, generate_setup_params, verify,
+    let nullifier = Fp::from(0x456);
+    let secret = Fp::from(0xabc);
+    let path_elements: Vec<Fp> = vec![2, 5, 7, 14, 23].iter().map(|e| Fp::from(*e)).collect();
+    let path_indices: Vec<Fp> = vec![0, 0, 1, 1, 0].iter().map(|e| Fp::from(*e)).collect();
+
+    let circuit = TornadoCircuit {
+        nullifier: Value::known(nullifier),
+        secret: Value::known(secret),
+        path_elements: path_elements.iter().map(|e| Value::known(*e)).collect(),
+        path_indices: path_indices.iter().map(|e| Value::known(*e)).collect(),
     };
-    // ANCHOR: test-circuit
-    // The number of rows in our circuit cannot exceed 2^k. Since our example
-    // circuit is very small, we can pick a very small value here.
-    let k = 4;
 
-    // Prepare the private and public inputs to the circuit!
-    let constant = Fp::from(7);
-    let a = Fp::from(2);
-    let b = Fp::from(2);
-    // let c = constant * a.square() * b.square();
-    let c = a + b;
+    let commitment = hash_values(vec![nullifier, secret]);
+    println!("commitment {:?}", commitment);
 
-    // Instantiate the circuit with the private inputs.
-    let circuit: MyCircuit<Fp> = create_circuit(a, b, constant);
+    let root = compute_root(
+        commitment.clone(),
+        path_elements.clone(),
+        path_indices.clone(),
+    );
+    println!("root {:?}", root);
 
-    // Arrange the public input. We expose the multiplication result in row 0
-    // of the instance column, so we position it there in our public inputs.
-    let mut public_inputs: Vec<Fp> = vec![c];
+    let nullifier_hash = hash_value(nullifier);
+    println!("nullifier_hash {:?}", nullifier_hash);
 
-    // Generate setup params
-    let params = generate_setup_params(k);
+    let public_input = vec![nullifier_hash, root];
+    let prover = MockProver::run(10, &circuit, vec![public_input.clone()]).unwrap();
 
-    // Generate proving and verifying keys
-    let empty_circuit: MyCircuit<Fp> = empty_circuit(constant);
+    println!("MAIN prover: {:?}", prover.verify());
+    // assert!(prover.verify().is_ok());
+
+    let params = generate_setup_params(10);
+
+    let public_inputs: Vec<Fp> = vec![nullifier_hash, root];
+
+    // Generate proving key
+    let empty_circuit: TornadoCircuit<Fp> = empty_circuit();
     let (pk, vk) = generate_keys(&params, &empty_circuit);
 
+    let circuit: TornadoCircuit<Fp> = create_circuit(
+        nullifier,
+        secret,
+        path_elements.clone(),
+        path_indices.clone(),
+    );
     let proof = generate_proof(&params, &pk, circuit, &public_inputs);
 
-    // Verify proof
-    let verify = verify(&params, &vk, &public_inputs, proof);
-    println!("Verify result: {:?}", verify);
+    let proof_vec = proof.to_vec();
+
+    let ret_val = verify(&params, &vk, &public_input, proof_vec);
+
+    match ret_val {
+        Err(_) => println!("failed"),
+        _ => println!("success"),
+    }
 }
